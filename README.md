@@ -24,6 +24,6 @@ First, save the script (e.g., as `install_py.sh`) to your Termux home directory.
 
 
 # Example: Download the raw script file
-wget [https://example.com/path/to/your/script/install_py.sh](https://example.com/path/to/your/script/install_py.sh)
-chmod +x installpy.sh
+git clone https://github.com/omar-termux/installpy.git
+chmod +x installpy/installpy.sh
 
