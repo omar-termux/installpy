@@ -27,5 +27,6 @@ First, save the script (e.g., as `install_py.sh`) to your Termux home directory.
 git clone https://github.com/omar-termux/installpy.git
 
 cd installpy
+
 chmod +x installpy/installpy
 
