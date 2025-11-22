@@ -1,0 +1,157 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+# Termux Python Source Installer (Robust Error Handling, v4)
+# Contains the necessary fix for the shell redirection error in run_cmd_silent.
+mkdir /data/data/com.termux/files/usr/pyinstall/
+mkdir /data/data/com.termux/files/usr/pyinstall/python
+# --- Configuration ---
+PYTHON_VERSION="$1"
+BASE_URL="https://www.python.org/ftp/python"
+INSTALL_PREFIX="/data/data/com.termux/files/usr/pyinstall/python"
+REQUIRED_PACKAGES="build-essential python wget tar binutils"
+LOG_FILE="/tmp/pyinstall_build.log"
+
+# Configuration flags specifically requested for Termux compatibility
+CONFIG_FLAGS="ac_cv_func_close_range=no ac_cv_func_preadv2=no ac_cv_func_pwritev2=no ac_cv_func_copy_file_range=no"
+
+# --- Functions ---
+
+# Function to display the error log and exit
+function handle_error {
+    local STEP_NAME="$1" # The name of the step that failed (e.g., "Configure")
+
+    echo -e "\n-------------------------------------------------" >&2
+    echo "🚨 CRITICAL BUILD ERROR in $STEP_NAME step!" >&2
+    echo "The command failed. Dumping the build log for debugging:" >&2
+    echo "-------------------------------------------------" >&2
+
+    # Check if the log file exists before trying to cat it
+    if [ -f "$LOG_FILE" ]; then
+        cat "$LOG_FILE" >&2
+    else
+        echo "Log file ($LOG_FILE) was not created or found. This usually indicates a shell parsing failure." >&2
+    fi
+
+    echo -e "-------------------------------------------------\n" >&2
+
+    # Clean up the log file
+    rm -f "$LOG_FILE"
+
+    # Clean up the source directory on failure
+    if [ -d "$SOURCE_DIR" ]; then
+        # Check if we are inside the source dir before trying to 'cd ..'
+        # This check is necessary because the outer script defines SOURCE_DIR
+        if [ "$PWD" != "/data/data/com.termux/files/usr" ]; then
+            cd .. 2>/dev/null
+        fi
+        rm -rf "$SOURCE_DIR" "$SOURCE_FILE"
+        echo "Cleaned up source files and exited."
+    fi
+    exit 1
+}
+
+# Function to safely run a command silently (redirecting output to log file)
+# Usage: run_cmd_silent <STEP_NAME> <COMMAND> <ARGS...>
+function run_cmd_silent {
+    local STEP_NAME="$1"
+    shift # Remove the step name from the arguments so "$@" contains only the command
+
+    # Use 'eval' to ensure correct parsing of the complex command line string,
+    # but the previous method should also work if the variables were quoted correctly.
+    # The current version uses the robust parameter expansion:
+    if ! "$@" > "$LOG_FILE" 2>&1; then
+        handle_error "$STEP_NAME"
+    fi
+    return 0
+}
+
+# --- Main Script Logic ---
+
+# Clear previous log file on start (important for clean slate)
+rm -f "$LOG_FILE"
+
+# 1. Check for version argument
+if [ -z "$PYTHON_VERSION" ]; then
+    echo "ERROR: Please provide the version number of Python to install."
+    echo "Usage: $0 <version>"
+    echo "Example: $0 3.12.0"
+    exit 1
+fi
+
+# 2. Auto-install required Termux packages
+echo "--- Installing required Termux dependencies ($REQUIRED_PACKAGES) ---"
+if ! pkg install -y $REQUIRED_PACKAGES; then
+    echo "CRITICAL ERROR: Failed to install required packages. Please check your network connection."
+    exit 1
+fi
+echo "    -> Dependencies confirmed/installed."
+
+# 3. Define filenames and URLs
+SOURCE_FILE="Python-$PYTHON_VERSION.tar.xz"
+DOWNLOAD_URL="$BASE_URL/$PYTHON_VERSION/$SOURCE_FILE"
+SOURCE_DIR="Python-$PYTHON_VERSION"
+
+echo "--- Preparing to install Python $PYTHON_VERSION ---"
+
+# 4. Download the source file
+echo -e "\n[1/5] Downloading source code..."
+if ! wget -q -c "$DOWNLOAD_URL"; then
+    echo "CRITICAL ERROR: Version was incorrect or download failed. Could not find $DOWNLOAD_URL"
+    exit 1
+fi
+echo "    -> Download successful."
+
+
+# 5. Extract the source file
+echo -e "\n[2/5] Extracting source code..."
+if [ -d "$SOURCE_DIR" ]; then
+    echo "    -> Directory $SOURCE_DIR already exists. Skipping extraction."
+else
+    # The -J flag handles .xz compression
+    if ! tar Jxf "$SOURCE_FILE"; then
+        echo "CRITICAL ERROR: Failed to extract $SOURCE_FILE."
+        exit 1
+    fi
+    echo "    -> Extraction successful."
+fi
+
+# 6. Change directory
+if [ ! -d "$SOURCE_DIR" ]; then
+    echo "CRITICAL ERROR: Extracted source directory $SOURCE_DIR not found."
+    exit 1
+fi
+cd "$SOURCE_DIR" || exit 1 # Exit if cd fails
+
+# 7. Run configure (SILENT, logs to $LOG_FILE)
+echo -e "\n[3/5] Running configure..."
+# Command arguments are now correctly passed and quoted:
+run_cmd_silent "Configure" ./configure --prefix="$INSTALL_PREFIX" $CONFIG_FLAGS
+echo "    -> Configure complete."
+
+# 8. Run make (compile) (SILENT, logs to $LOG_FILE)
+NUM_JOBS=$(nproc)
+echo -e "\n[4/5] Running make (compiling using $NUM_JOBS cores)..."
+run_cmd_silent "Make" make -j "$NUM_JOBS"
+echo "    -> Compilation successful."
+
+# 9. Run make install (SILENT, logs to $LOG_FILE)
+echo -e "\n[5/5] Running make install (installing to $INSTALL_PREFIX)..."
+run_cmd_silent "Make Install" make install
+echo "    -> Installation successful."
+
+# --- Cleanup and Completion ---
+# Go back to the original directory before cleanup
+cd ..
+
+# 10. Delete temporary directory and tarball
+echo -e "\nCleaning up temporary files..."
+rm -rf "$SOURCE_DIR" "$SOURCE_FILE"
+rm -f "$LOG_FILE"
+echo "    -> Removed $SOURCE_DIR, $SOURCE_FILE, and log file."
+
+echo -e "\n================================================="
+echo "✅ Python $PYTHON_VERSION successfully compiled and installed!"
+echo "   Start a new Termux session to use the new 'python$PYTHON_VERSION' binary."
+echo "================================================="
+exit 0
+
